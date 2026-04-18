@@ -1,0 +1,157 @@
+esphome:
+  name: osdp-controller
+  friendly_name: OSDP Controller
+  includes:
+    - osdp_api.h
+  libraries:
+    - LibOSDP=https://github.com/goToMain/libosdp
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          auto *bridge = new esphome::osdp_bridge::OsdpControllerBridge(
+              2, 16, 17, 4, 9600, 1, "30303030303030303030303030303030");
+          bridge->set_online_binary_sensor(id(reader_online));
+          bridge->set_tamper_binary_sensor(id(reader_tamper));
+          bridge->set_door_binary_sensor(id(reader_door));
+          bridge->set_secure_channel_binary_sensor(id(reader_secure_channel));
+          bridge->set_last_card_text_sensor(id(last_card));
+          bridge->set_last_keypad_text_sensor(id(last_keypad));
+          bridge->set_last_event_text_sensor(id(last_event));
+          bridge->begin();
+          id(osdp_bridge_ptr) = static_cast<void *>(bridge);
+
+esp32:
+  board: mhetesp32devkit
+  framework:
+    type: arduino
+
+logger:
+
+api:
+  encryption:
+    key: "VBpYRfwqIu0m7ZyPXMk6Q7M/LWp5UdY5JxLDuuJUFpo="
+  services:
+    - service: osdp_grant_access
+      variables:
+        token: string
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->grant_access(token);
+            }
+    - service: osdp_deny_access
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->deny_access();
+            }
+    - service: osdp_buzzer
+      variables:
+        on_ms: int
+        off_ms: int
+        repeats: int
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->buzz(on_ms, off_ms, repeats);
+            }
+
+ota:
+  - platform: esphome
+    password: "750b5528fe2602ca18ecb4105f33181c"
+    
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "OSDP Fallback"
+    password: "change-me-now"
+
+globals:
+  - id: osdp_bridge_ptr
+    type: void*
+    restore_value: no
+    initial_value: "nullptr"
+
+interval:
+  - interval: 10ms
+    then:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->loop();
+          }
+
+binary_sensor:
+  - platform: template
+    id: reader_online
+    name: "Reader Online"
+    device_class: connectivity
+  - platform: template
+    id: reader_secure_channel
+    name: "Reader Secure Channel"
+  - platform: template
+    id: reader_tamper
+    name: "Reader Tamper"
+    device_class: tamper
+  - platform: template
+    id: reader_door
+    name: "Reader Door"
+    device_class: door
+
+text_sensor:
+  - platform: template
+    id: last_card
+    name: "Last Card"
+  - platform: template
+    id: last_keypad
+    name: "Last Keypad"
+  - platform: template
+    id: last_event
+    name: "Last OSDP Event"
+
+button:
+  - platform: template
+    name: "OSDP Poll"
+    on_press:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->request_poll();
+          }
+
+switch:
+  - platform: template
+    name: "Reader LED"
+    optimistic: true
+    turn_on_action:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->set_reader_led(true);
+          }
+    turn_off_action:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->set_reader_led(false);
+          }
+  - platform: template
+    name: "Reader Output 1"
+    optimistic: true
+    turn_on_action:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->set_output(0, true);
+          }
+    turn_off_action:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->set_output(0, false);
+          }
