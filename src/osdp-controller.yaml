@@ -59,6 +59,20 @@ api:
             if (bridge != nullptr) {
               bridge->buzz(on_ms, off_ms, repeats);
             }
+    - service: osdp_access_granted
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->show_access_granted();
+            }
+    - service: osdp_access_denied
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->show_access_denied();
+            }
 
 ota:
   - platform: esphome
@@ -122,6 +136,46 @@ button:
           auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
           if (bridge != nullptr) {
             bridge->request_poll();
+          }
+  - platform: template
+    name: "Reader LED Blue"
+    on_press:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->set_reader_led_blue();
+          }
+  - platform: template
+    name: "Reader LED Green"
+    on_press:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->set_reader_led_green();
+          }
+  - platform: template
+    name: "Reader LED Red"
+    on_press:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->set_reader_led_red();
+          }
+  - platform: template
+    name: "Access Granted"
+    on_press:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->show_access_granted();
+          }
+  - platform: template
+    name: "Access Denied"
+    on_press:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->show_access_denied();
           }
 
 switch:

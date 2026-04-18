@@ -128,17 +128,108 @@ class OsdpControllerBridge {
 
   void deny_access() { publish_event_("deny_not_implemented"); }
 
+  void set_reader_led_blue() { submit_led_command_(OSDP_LED_COLOR_BLUE); }
+
+  void set_reader_led_green() { submit_led_command_(OSDP_LED_COLOR_GREEN); }
+
+  void set_reader_led_red() { submit_led_command_(OSDP_LED_COLOR_RED); }
+
+  void set_reader_led_off() { submit_led_command_(OSDP_LED_COLOR_NONE); }
+
   void set_reader_led(bool enabled) {
+    if (enabled) {
+      set_reader_led_blue();
+    } else {
+      set_reader_led_off();
+    }
+  }
+
+  void show_access_granted() {
+    struct osdp_cmd led_cmd = {};
+    led_cmd.id = OSDP_CMD_LED;
+    led_cmd.led.reader = 0;
+    led_cmd.led.led_number = 0;
+    led_cmd.led.temporary.control_code = 2;
+    led_cmd.led.temporary.on_count = 10;
+    led_cmd.led.temporary.off_count = 0;
+    led_cmd.led.temporary.on_color = OSDP_LED_COLOR_GREEN;
+    led_cmd.led.temporary.off_color = OSDP_LED_COLOR_NONE;
+    led_cmd.led.temporary.timer_count = 30;
+    led_cmd.led.permanent.control_code = 1;
+    led_cmd.led.permanent.on_count = 1;
+    led_cmd.led.permanent.off_count = 0;
+    led_cmd.led.permanent.on_color = OSDP_LED_COLOR_BLUE;
+    led_cmd.led.permanent.off_color = OSDP_LED_COLOR_NONE;
+    led_cmd.led.permanent.timer_count = 0;
+    submit_command_(led_cmd);
+
+    struct osdp_cmd buzzer_cmd = {};
+    buzzer_cmd.id = OSDP_CMD_BUZZER;
+    buzzer_cmd.buzzer.reader = 0;
+    buzzer_cmd.buzzer.control_code = 2;
+    buzzer_cmd.buzzer.on_count = 2;
+    buzzer_cmd.buzzer.off_count = 0;
+    buzzer_cmd.buzzer.rep_count = 1;
+    submit_command_(buzzer_cmd);
+
+    publish_event_("access_granted");
+  }
+
+  void show_access_denied() {
+    struct osdp_cmd led_cmd = {};
+    led_cmd.id = OSDP_CMD_LED;
+    led_cmd.led.reader = 0;
+    led_cmd.led.led_number = 0;
+    led_cmd.led.temporary.control_code = 2;
+    led_cmd.led.temporary.on_count = 5;
+    led_cmd.led.temporary.off_count = 5;
+    led_cmd.led.temporary.on_color = OSDP_LED_COLOR_RED;
+    led_cmd.led.temporary.off_color = OSDP_LED_COLOR_NONE;
+    led_cmd.led.temporary.timer_count = 30;
+    led_cmd.led.permanent.control_code = 1;
+    led_cmd.led.permanent.on_count = 1;
+    led_cmd.led.permanent.off_count = 0;
+    led_cmd.led.permanent.on_color = OSDP_LED_COLOR_BLUE;
+    led_cmd.led.permanent.off_color = OSDP_LED_COLOR_NONE;
+    led_cmd.led.permanent.timer_count = 0;
+    submit_command_(led_cmd);
+
+    struct osdp_cmd buzzer_cmd = {};
+    buzzer_cmd.id = OSDP_CMD_BUZZER;
+    buzzer_cmd.buzzer.reader = 0;
+    buzzer_cmd.buzzer.control_code = 2;
+    buzzer_cmd.buzzer.on_count = 1;
+    buzzer_cmd.buzzer.off_count = 1;
+    buzzer_cmd.buzzer.rep_count = 2;
+    submit_command_(buzzer_cmd);
+
+    publish_event_("access_denied");
+  }
+
+  void restore_idle_led() {
+    set_reader_led_blue();
+  }
+
+  void set_output(uint8_t output, bool enabled) {
+    struct osdp_cmd cmd = {};
+    cmd.id = OSDP_CMD_OUTPUT;
+    cmd.output.output_no = output;
+    cmd.output.control_code = enabled ? 2 : 1;
+    cmd.output.timer_count = 0;
+    submit_command_(cmd);
+  }
+
+ protected:
+  void submit_led_command_(uint8_t color) {
     struct osdp_cmd cmd = {};
     cmd.id = OSDP_CMD_LED;
     cmd.led.reader = 0;
     cmd.led.led_number = 0;
     cmd.led.temporary.control_code = 0;
     cmd.led.permanent.control_code = 1;
-    cmd.led.permanent.on_count = enabled ? 1 : 0;
+    cmd.led.permanent.on_count = color == OSDP_LED_COLOR_NONE ? 0 : 1;
     cmd.led.permanent.off_count = 0;
-    cmd.led.permanent.on_color =
-        enabled ? OSDP_LED_COLOR_GREEN : OSDP_LED_COLOR_NONE;
+    cmd.led.permanent.on_color = color;
     cmd.led.permanent.off_color = OSDP_LED_COLOR_NONE;
     cmd.led.permanent.timer_count = 0;
     submit_command_(cmd);
@@ -154,17 +245,6 @@ class OsdpControllerBridge {
     cmd.buzzer.rep_count = repeats;
     submit_command_(cmd);
   }
-
-  void set_output(uint8_t output, bool enabled) {
-    struct osdp_cmd cmd = {};
-    cmd.id = OSDP_CMD_OUTPUT;
-    cmd.output.output_no = output;
-    cmd.output.control_code = enabled ? 2 : 1;
-    cmd.output.timer_count = 0;
-    submit_command_(cmd);
-  }
-
- protected:
   struct OsdpSerialChannel {
     HardwareSerial *port;
     int direction_pin;
@@ -255,6 +335,7 @@ class OsdpControllerBridge {
   void handle_command_complete_(int pd, const struct osdp_cmd *cmd,
                                 enum osdp_completion_status status) {
     ESP_LOGD(TAG, "PD %d command %d completion %d", pd, cmd->id, status);
+    release_command_slot_(cmd);
   }
 
   void handle_status_event_(int pd, const struct osdp_status_report &status) {
@@ -280,6 +361,9 @@ class OsdpControllerBridge {
       ESP_LOGI(TAG, "PD %d online=%d", pd, online);
       if (online_binary_sensor_ != nullptr) {
         online_binary_sensor_->publish_state(online);
+      }
+      if (online) {
+        restore_idle_led();
       }
       publish_event_(online ? "online" : "offline");
     } else if (notification.type == OSDP_EVENT_NOTIFICATION_SC_STATUS) {
@@ -311,11 +395,38 @@ class OsdpControllerBridge {
       ESP_LOGW(TAG, "Ignoring command %d before bridge start", cmd.id);
       return false;
     }
-    if (control_panel_.submit_command(0, &cmd) == 0) {
+    struct osdp_cmd *queued_cmd = reserve_command_slot_(cmd);
+    if (queued_cmd == nullptr) {
+      ESP_LOGW(TAG, "No free OSDP command slots for command %d", cmd.id);
+      return false;
+    }
+    if (control_panel_.submit_command(0, queued_cmd) == 0) {
       return true;
     }
+    release_command_slot_(queued_cmd);
     ESP_LOGW(TAG, "Failed to queue OSDP command %d", cmd.id);
     return false;
+  }
+
+  struct osdp_cmd *reserve_command_slot_(const struct osdp_cmd &cmd) {
+    for (size_t i = 0; i < kCommandPoolSize; ++i) {
+      if (!command_slot_in_use_[i]) {
+        command_slot_in_use_[i] = true;
+        command_pool_[i] = cmd;
+        return &command_pool_[i];
+      }
+    }
+    return nullptr;
+  }
+
+  void release_command_slot_(const struct osdp_cmd *cmd) {
+    for (size_t i = 0; i < kCommandPoolSize; ++i) {
+      if (&command_pool_[i] == cmd) {
+        command_slot_in_use_[i] = false;
+        std::memset(&command_pool_[i], 0, sizeof(command_pool_[i]));
+        return;
+      }
+    }
   }
 
   bool parse_scbk_() {
@@ -380,11 +491,14 @@ class OsdpControllerBridge {
   int baud_rate_;
   int reader_address_;
   std::string scbk_hex_;
+  static constexpr size_t kCommandPoolSize = 4;
   HardwareSerial serial_;
   OsdpSerialChannel channel_state_;
   struct osdp_channel channel_;
   OSDP::ControlPanel control_panel_;
   osdp_pd_info_t pd_info_{};
+  struct osdp_cmd command_pool_[kCommandPoolSize]{};
+  bool command_slot_in_use_[kCommandPoolSize]{};
   uint8_t scbk_[16]{};
   bool scbk_present_{false};
   bool started_{false};
