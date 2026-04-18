@@ -219,6 +219,17 @@ class OsdpControllerBridge {
     submit_command_(cmd);
   }
 
+  void buzz(uint16_t on_ms, uint16_t off_ms, uint8_t repeats) {
+    struct osdp_cmd cmd = {};
+    cmd.id = OSDP_CMD_BUZZER;
+    cmd.buzzer.reader = 0;
+    cmd.buzzer.control_code = repeats == 0 ? 1 : 2;
+    cmd.buzzer.on_count = on_ms / 100;
+    cmd.buzzer.off_count = off_ms / 100;
+    cmd.buzzer.rep_count = repeats;
+    submit_command_(cmd);
+  }
+
  protected:
   void submit_led_command_(uint8_t color) {
     struct osdp_cmd cmd = {};
@@ -232,17 +243,6 @@ class OsdpControllerBridge {
     cmd.led.permanent.on_color = color;
     cmd.led.permanent.off_color = OSDP_LED_COLOR_NONE;
     cmd.led.permanent.timer_count = 0;
-    submit_command_(cmd);
-  }
-
-  void buzz(uint16_t on_ms, uint16_t off_ms, uint8_t repeats) {
-    struct osdp_cmd cmd = {};
-    cmd.id = OSDP_CMD_BUZZER;
-    cmd.buzzer.reader = 0;
-    cmd.buzzer.control_code = repeats == 0 ? 1 : 2;
-    cmd.buzzer.on_count = on_ms / 100;
-    cmd.buzzer.off_count = off_ms / 100;
-    cmd.buzzer.rep_count = repeats;
     submit_command_(cmd);
   }
   struct OsdpSerialChannel {
