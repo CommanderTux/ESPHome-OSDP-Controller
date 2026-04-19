@@ -1,10 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <osdp.hpp>
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -44,6 +46,12 @@ class OsdpControllerBridge {
     pinMode(direction_pin_, OUTPUT);
     digitalWrite(direction_pin_, LOW);
     serial_.begin(baud_rate_, SERIAL_8N1, rx_pin_, tx_pin_);
+
+    if (!preferences_.begin("osdp_cards", false)) {
+      ESP_LOGE(TAG, "Failed to open preferences storage");
+      return;
+    }
+    load_cards_();
 
     scbk_present_ = parse_scbk_();
 
@@ -121,12 +129,67 @@ class OsdpControllerBridge {
   void request_poll() { request_status_(); }
 
   void grant_access(const std::string &token) {
-    publish_event_("grant_not_implemented:" + std::string(token));
-    ESP_LOGW(TAG,
-             "grant_access requested, but access-grant semantics are reader-specific");
+    const std::string normalized = normalize_card_id_(token);
+    if (normalized.empty()) {
+      ESP_LOGW(TAG, "Ignoring empty card in grant_access");
+      return;
+    }
+    upsert_card_(normalized, "", true);
+    publish_event_("card_granted:" + normalized);
   }
 
-  void deny_access() { publish_event_("deny_not_implemented"); }
+  void deny_access() { show_access_denied(); }
+
+  bool add_card(const std::string &card_id, const std::string &name) {
+    const std::string normalized = normalize_card_id_(card_id);
+    if (normalized.empty()) {
+      return false;
+    }
+    return upsert_card_(normalized, name, true);
+  }
+
+  bool remove_card(const std::string &card_id) {
+    const std::string normalized = normalize_card_id_(card_id);
+    if (normalized.empty()) {
+      return false;
+    }
+
+    for (auto it = cards_.begin(); it != cards_.end(); ++it) {
+      if (it->card_id == normalized) {
+        cards_.erase(it);
+        save_cards_();
+        publish_event_("card_removed:" + normalized);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool set_card_enabled(const std::string &card_id, bool enabled) {
+    const std::string normalized = normalize_card_id_(card_id);
+    if (normalized.empty()) {
+      return false;
+    }
+
+    for (auto &entry : cards_) {
+      if (entry.card_id == normalized) {
+        entry.enabled = enabled;
+        save_cards_();
+        publish_event_(enabled ? "card_enabled:" + normalized
+                               : "card_disabled:" + normalized);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  void clear_cards() {
+    cards_.clear();
+    save_cards_();
+    publish_event_("cards_cleared");
+  }
 
   void set_reader_led_blue() { submit_led_command_(OSDP_LED_COLOR_BLUE); }
 
@@ -210,6 +273,8 @@ class OsdpControllerBridge {
     set_reader_led_blue();
   }
 
+  void open_door() { pulse_door_output_(0, 50); }
+
   void set_output(uint8_t output, bool enabled) {
     struct osdp_cmd cmd = {};
     cmd.id = OSDP_CMD_OUTPUT;
@@ -243,6 +308,15 @@ class OsdpControllerBridge {
     cmd.led.permanent.on_color = color;
     cmd.led.permanent.off_color = OSDP_LED_COLOR_NONE;
     cmd.led.permanent.timer_count = 0;
+    submit_command_(cmd);
+  }
+
+  void pulse_door_output_(uint8_t output, uint16_t duration_100ms) {
+    struct osdp_cmd cmd = {};
+    cmd.id = OSDP_CMD_OUTPUT;
+    cmd.output.output_no = output;
+    cmd.output.control_code = 5;
+    cmd.output.timer_count = duration_100ms;
     submit_command_(cmd);
   }
   struct OsdpSerialChannel {
@@ -300,7 +374,15 @@ class OsdpControllerBridge {
         if (last_card_text_sensor_ != nullptr) {
           last_card_text_sensor_->publish_state(card.c_str());
         }
-        publish_event_(card);
+        const CardEntry *entry = find_card_(card);
+        if (entry != nullptr && entry->enabled) {
+          show_access_granted();
+          open_door();
+          publish_event_("allowed:" + card);
+        } else {
+          show_access_denied();
+          publish_event_("denied:" + card);
+        }
         break;
       }
       case OSDP_EVENT_KEYPRESS: {
@@ -484,6 +566,108 @@ class OsdpControllerBridge {
     return out;
   }
 
+  struct CardEntry {
+    std::string card_id;
+    std::string name;
+    bool enabled;
+  };
+
+  static std::string normalize_card_id_(const std::string &raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (char c : raw) {
+      if (c == ' ' || c == ':' || c == '-') {
+        continue;
+      }
+      if (c >= 'a' && c <= 'f') {
+        out.push_back(static_cast<char>(c - 'a' + 'A'));
+      } else {
+        out.push_back(c);
+      }
+    }
+    return out;
+  }
+
+  const CardEntry *find_card_(const std::string &card_id) const {
+    const std::string normalized = normalize_card_id_(card_id);
+    for (const auto &entry : cards_) {
+      if (entry.card_id == normalized) {
+        return &entry;
+      }
+    }
+    return nullptr;
+  }
+
+  bool upsert_card_(const std::string &card_id, const std::string &name,
+                    bool enabled) {
+    for (auto &entry : cards_) {
+      if (entry.card_id == card_id) {
+        if (!name.empty()) {
+          entry.name = name;
+        }
+        entry.enabled = enabled;
+        save_cards_();
+        publish_event_("card_updated:" + card_id);
+        return true;
+      }
+    }
+
+    cards_.push_back(CardEntry{card_id, name, enabled});
+    save_cards_();
+    publish_event_("card_added:" + card_id);
+    return true;
+  }
+
+  void load_cards_() {
+    cards_.clear();
+    const String raw = preferences_.getString("cards", "");
+    if (raw.isEmpty()) {
+      ESP_LOGI(TAG, "No whitelist stored yet");
+      return;
+    }
+
+    int start = 0;
+    while (start >= 0 && start < raw.length()) {
+      int end = raw.indexOf('\n', start);
+      String line = end >= 0 ? raw.substring(start, end) : raw.substring(start);
+      line.trim();
+      if (line.isEmpty()) {
+        start = end >= 0 ? end + 1 : -1;
+        continue;
+      }
+
+      const int first_sep = line.indexOf('|');
+      const int second_sep = line.indexOf('|', first_sep + 1);
+      if (first_sep <= 0 || second_sep <= first_sep) {
+        continue;
+      }
+
+      const String card = line.substring(0, first_sep);
+      const String enabled = line.substring(first_sep + 1, second_sep);
+      const String name = line.substring(second_sep + 1);
+      cards_.push_back(CardEntry{normalize_card_id_(card.c_str()),
+                                 std::string(name.c_str()),
+                                 enabled == "1"});
+      start = end >= 0 ? end + 1 : -1;
+    }
+
+    ESP_LOGI(TAG, "Loaded %u whitelist cards",
+             static_cast<unsigned>(cards_.size()));
+  }
+
+  void save_cards_() {
+    String raw;
+    for (const auto &entry : cards_) {
+      raw += entry.card_id.c_str();
+      raw += '|';
+      raw += entry.enabled ? '1' : '0';
+      raw += '|';
+      raw += entry.name.c_str();
+      raw += '\n';
+    }
+    preferences_.putString("cards", raw);
+  }
+
   int uart_bus_;
   int rx_pin_;
   int tx_pin_;
@@ -499,6 +683,8 @@ class OsdpControllerBridge {
   osdp_pd_info_t pd_info_{};
   struct osdp_cmd command_pool_[kCommandPoolSize]{};
   bool command_slot_in_use_[kCommandPoolSize]{};
+  std::vector<CardEntry> cards_;
+  ::Preferences preferences_;
   uint8_t scbk_[16]{};
   bool scbk_present_{false};
   bool started_{false};

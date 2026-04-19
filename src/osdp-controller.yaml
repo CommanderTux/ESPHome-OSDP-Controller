@@ -4,6 +4,7 @@ esphome:
   includes:
     - osdp_api.h
   libraries:
+    - Preferences
     - LibOSDP=https://github.com/goToMain/libosdp
   on_boot:
     priority: -100
@@ -72,6 +73,49 @@ api:
             auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
             if (bridge != nullptr) {
               bridge->show_access_denied();
+            }
+    - service: osdp_add_card
+      variables:
+        card_id: string
+        name: string
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->add_card(card_id, name);
+            }
+    - service: osdp_remove_card
+      variables:
+        card_id: string
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->remove_card(card_id);
+            }
+    - service: osdp_set_card_enabled
+      variables:
+        card_id: string
+        enabled: bool
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->set_card_enabled(card_id, enabled);
+            }
+    - service: osdp_clear_cards
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->clear_cards();
+            }
+    - service: osdp_open_door
+      then:
+        - lambda: |-
+            auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+            if (bridge != nullptr) {
+              bridge->open_door();
             }
 
 ota:
@@ -176,6 +220,14 @@ button:
           auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
           if (bridge != nullptr) {
             bridge->show_access_denied();
+          }
+  - platform: template
+    name: "Open Door"
+    on_press:
+      - lambda: |-
+          auto *bridge = static_cast<esphome::osdp_bridge::OsdpControllerBridge *>(id(osdp_bridge_ptr));
+          if (bridge != nullptr) {
+            bridge->open_door();
           }
 
 switch:
